@@ -39,29 +39,21 @@
       }
     </script>
     <style>
-      /* PWA Safe Area adjustments */
       body {
         padding-top: env(safe-area-inset-top);
         padding-bottom: env(safe-area-inset-bottom);
         padding-left: env(safe-area-inset-left);
         padding-right: env(safe-area-inset-right);
-        overscroll-behavior-y: none; /* Prevent pull-to-refresh on mobile */
+        overscroll-behavior-y: none;
       }
-      /* Custom Scrollbar */
-      ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
-      }
-      ::-webkit-scrollbar-track {
-        background: #09090b; 
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #27272a; 
-        border-radius: 4px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #3f3f46; 
-      }
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: #09090b; }
+      ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+      
+      /* QR Scanner Overlay Style */
+      #reader__scan_region { background: #000; }
+      #reader video { border-radius: 12px; }
     </style>
   <script type="importmap">
 {
@@ -74,26 +66,20 @@
     "@google/genai": "https://esm.sh/@google/genai@^1.35.0",
     "clsx": "https://esm.sh/clsx@^2.1.1",
     "tailwind-merge": "https://esm.sh/tailwind-merge@^3.4.0",
-    "peerjs": "https://esm.sh/peerjs@1.5.4"
+    "peerjs": "https://esm.sh/peerjs@1.5.4",
+    "qrcode": "https://esm.sh/qrcode@1.5.4",
+    "html5-qrcode": "https://esm.sh/html5-qrcode@2.3.8"
   }
 }
 </script>
 </head>
   <body class="bg-background text-foreground antialiased min-h-screen selection:bg-primary selection:text-white">
     <div id="root"></div>
-    
-    <!-- Load App -->
     <script type="module" src="./index.tsx"></script>
-
     <script>
-      // Service Worker Registration for PWA
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').then(registration => {
-            console.log('SW registered: ', registration);
-          }).catch(registrationError => {
-            console.log('SW registration failed: ', registrationError);
-          });
+          navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW failed:', err));
         });
       }
     </script>
