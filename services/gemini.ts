@@ -1,14 +1,10 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { DeckButtonConfig } from "../types";
 
 export const generateButtonConfig = async (description: string): Promise<Partial<DeckButtonConfig>> => {
-  const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : undefined;
-  
-  if (!apiKey) {
-    throw new Error("API Key missing in environment variables.");
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
+  // Always use this pattern for initialization as per guidelines.
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
   
   const availableIcons = [
     'monitor', 'mic', 'mic-off', 'camera', 'message-square', 
@@ -37,9 +33,16 @@ export const generateButtonConfig = async (description: string): Promise<Partial
     }
   });
 
-  if (response.text) {
-    return JSON.parse(response.text);
+  // response.text is a property getter, not a method.
+  const generatedText = response.text;
+  if (generatedText) {
+    try {
+      return JSON.parse(generatedText);
+    } catch (e) {
+      console.error("Failed to parse AI generated JSON", e);
+      throw new Error("Could not parse generated button configuration");
+    }
   }
   
-  throw new Error("Failed to generate config");
+  throw new Error("Failed to generate config from model");
 };
