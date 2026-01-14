@@ -2,7 +2,8 @@ import React from 'react';
 import { 
   Monitor, Mic, MicOff, Camera, MessageSquare, Clock, Power, 
   Settings, Zap, Wifi, Radio, Command, Edit, Plus, Trash2, 
-  Sparkles, Check, X, Smartphone, Activity, Volume2, Video
+  Sparkles, Check, X, Smartphone, Activity, Volume2, Video,
+  Bell, BellOff
 } from 'lucide-react';
 
 export const IconMap: Record<string, React.ElementType> = {
@@ -27,7 +28,9 @@ export const IconMap: Record<string, React.ElementType> = {
   smartphone: Smartphone,
   activity: Activity,
   volume: Volume2,
-  video: Video
+  video: Video,
+  bell: Bell,
+  'bell-off': BellOff
 };
 
 interface IconProps extends React.SVGProps<SVGSVGElement> {
