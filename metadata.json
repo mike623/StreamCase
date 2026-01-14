@@ -1,0 +1,7 @@
+{
+  "name": "StreamCast Deck",
+  "description": "A PWA Stream Deck alternative for broadcasting messages. Features customizable buttons, broadcast simulation, and AI-powered button generation.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

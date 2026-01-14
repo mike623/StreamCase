@@ -1,0 +1,25 @@
+{
+  "short_name": "StreamCast",
+  "name": "StreamCast Deck P2P",
+  "description": "Cross-device P2P message broadcaster and controller.",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3661/3661502.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3661/3661502.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/?source=pwa",
+  "background_color": "#09090b",
+  "display": "standalone",
+  "scope": "/",
+  "theme_color": "#2563eb",
+  "orientation": "portrait-primary"
+}
