@@ -54,7 +54,7 @@ const App = () => {
     setIsStandalone(standalone);
     
     // Notification Support Check
-    const supported = ('Notification' in window) && ('serviceWorker' in navigator);
+    const supported = ('Notification' in window);
     setIsNotificationSupported(supported);
     
     if (supported) {
@@ -66,6 +66,17 @@ const App = () => {
       addLog(`System: Notification engine initialized. Status: ${currentPermission}`);
     } else {
       addLog('System: Notification API not detected. Mobile Safari requires PWA installation.', 'info');
+    }
+
+    // Debug SW Registration
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistration().then(reg => {
+        if (reg) {
+          addLog(`SW Status: Found registration (${reg.active ? 'active' : 'pending'})`);
+        } else {
+          addLog('SW Status: No active registration found yet.');
+        }
+      }).catch(err => addLog(`SW Check Error: ${err.message}`, 'error'));
     }
   }, [addLog]);
 
@@ -93,13 +104,17 @@ const App = () => {
         setNotificationsEnabled(true);
         addLog('Notification permission granted successfully.');
         
-        const registration = await navigator.serviceWorker.ready;
-        if (registration && 'showNotification' in registration) {
-          registration.showNotification("StreamCast Deck", {
-            body: "Notifications are active! You will receive alerts for all incoming broadcasts.",
-            icon: 'https://cdn-icons-png.flaticon.com/512/3661/3661502.png',
-            tag: 'streamcast-verify'
-          });
+        // Try to send immediate test via SW if possible
+        if ('serviceWorker' in navigator) {
+          const reg = await navigator.serviceWorker.getRegistration();
+          if (reg && reg.showNotification) {
+             reg.showNotification("StreamCast Deck", {
+              body: "Permission Verified!",
+              tag: 'streamcast-verify'
+            });
+          } else {
+             new Notification("StreamCast Deck", { body: "Permission Verified!" });
+          }
         }
       } else {
         addLog(`Notification permission declined: ${permission}`);
@@ -110,55 +125,67 @@ const App = () => {
   };
 
   const showLocalNotification = useCallback(async (msg: BroadcastMessage) => {
-    addLog(`Attempting notification for: ${msg.buttonId}...`);
+    addLog(`Notification trigger for: ${msg.buttonId}`);
 
     if (Notification.permission !== 'granted') {
-      addLog(`Notification failed: Permission is ${Notification.permission}. Triggering request fallback.`, 'error');
-      requestNotificationPermission();
+      addLog(`Notification blocked: Status is ${Notification.permission}`, 'error');
       return;
     }
 
     if (!notificationsEnabled) {
-      addLog('Notification skipped: User disabled alerts in UI toggle.', 'info');
+      addLog('Notification skipped: Disabled in UI.', 'info');
       return;
     }
     
-    try {
-      const btn = buttons.find(b => b.id === msg.buttonId);
-      const label = btn?.label || 'Remote Command';
-      const body = typeof msg.payload === 'string' ? msg.payload : JSON.stringify(msg.payload);
+    const btn = buttons.find(b => b.id === msg.buttonId);
+    const label = btn?.label || 'Remote Command';
+    const body = typeof msg.payload === 'string' ? msg.payload : JSON.stringify(msg.payload);
 
-      addLog('Waiting for ServiceWorker registration...');
-      const registration = await navigator.serviceWorker.ready;
-      
-      if (registration && 'showNotification' in registration) {
-        addLog('SW Ready. Triggering showNotification...');
-        await (registration as ServiceWorkerRegistration).showNotification(`StreamCast: ${label}`, {
-          body,
-          icon: 'https://cdn-icons-png.flaticon.com/512/3661/3661502.png',
-          badge: 'https://cdn-icons-png.flaticon.com/512/3661/3661502.png',
-          vibrate: [200, 100, 200],
-          tag: `msg-${Date.now()}`,
-          renotify: true,
-          requireInteraction: false
-        } as any);
-        addLog(`Notification delivered for broadcast: ${label}`);
-      } else {
-        addLog('SW Notification not available. Falling back to window.Notification...', 'info');
-        new Notification(`StreamCast: ${label}`, { body });
-        addLog(`Legacy notification triggered for: ${label}`);
+    // Resilience Strategy: 
+    // 1. Try Service Worker (best for mobile/background)
+    // 2. Fallback to window.Notification immediately if SW takes too long or isn't there
+    
+    let delivered = false;
+
+    if ('serviceWorker' in navigator) {
+      try {
+        // Use a race to avoid hanging on .ready
+        const registration = await Promise.race([
+          navigator.serviceWorker.ready,
+          new Promise<null>((_, reject) => setTimeout(() => reject(new Error('SW Timeout')), 2000))
+        ]) as ServiceWorkerRegistration | null;
+
+        if (registration && registration.showNotification) {
+          await (registration as any).showNotification(`StreamCast: ${label}`, {
+            body,
+            icon: 'https://cdn-icons-png.flaticon.com/512/3661/3661502.png',
+            tag: `msg-${Date.now()}`,
+            renotify: true,
+          });
+          delivered = true;
+          addLog('Notification sent via ServiceWorker.');
+        }
+      } catch (swErr) {
+        addLog(`SW Notification failed or timed out: ${swErr.message}. Trying fallback.`, 'info');
       }
-    } catch (err) {
-      addLog(`Notification execution failed: ${err}`, 'error');
+    }
+
+    if (!delivered) {
+      try {
+        new Notification(`StreamCast: ${label}`, { body });
+        addLog('Notification sent via Window API.');
+      } catch (err) {
+        addLog(`Window Notification failed: ${err.message}`, 'error');
+      }
     }
   }, [notificationsEnabled, buttons, addLog]);
 
   const testNotification = () => {
-    addLog('User triggered manual test notification.');
+    addLog('Running manual notification test...');
     showLocalNotification({
       type: 'BUTTON_PRESS',
       buttonId: 'test-debug',
-      payload: 'This is a test notification from the debug panel.',
+      payload: 'This is a test notification message.',
       timestamp: Date.now()
     });
   };
@@ -171,7 +198,7 @@ const App = () => {
     peer.on('open', (id) => {
       setPeerId(id);
       setIsPeerReady(true);
-      addLog(`Network: P2P Ready. My ID: ${id}`);
+      addLog(`P2P ID: ${id}`);
       QRCode.toDataURL(id, { width: 300, margin: 2 }).then(setQrDataUrl);
     });
 
@@ -197,12 +224,12 @@ const App = () => {
 
     conn.on('data', (data) => {
       const msg = data as BroadcastMessage;
-      addLog(`Received broadcast: ${msg.buttonId}`, 'broadcast');
+      addLog(`Broadcast received: ${msg.buttonId}`, 'broadcast');
       showLocalNotification(msg);
     });
 
     conn.on('close', () => {
-      addLog(`Peer disconnected: ${conn.peer}`);
+      addLog(`Connection closed: ${conn.peer}`);
       setConnections(prev => prev.filter(c => c.peer !== conn.peer));
     });
   };
@@ -210,7 +237,7 @@ const App = () => {
   const connectToPeer = (targetId: string) => {
     const cleanId = targetId.trim();
     if (!peerRef.current || !cleanId || cleanId === peerId) return;
-    addLog(`Connecting to peer: ${cleanId}...`);
+    addLog(`Connecting to ${cleanId}...`);
     const conn = peerRef.current.connect(cleanId);
     setupConnection(conn);
     setIsConnectModalOpen(false);
@@ -251,13 +278,13 @@ const App = () => {
       payload: btn.payload,
       timestamp: Date.now()
     };
-    addLog(`Sending Broadcast: ${btn.label}`, 'broadcast');
+    addLog(`Broadcasting ${btn.label}...`, 'broadcast');
     connections.forEach(conn => conn.open && conn.send(message));
   };
 
   const copyId = () => {
     navigator.clipboard.writeText(peerId);
-    addLog('Peer ID copied to clipboard');
+    addLog('Peer ID copied');
   };
 
   const saveButtons = (newButtons: DeckButtonConfig[]) => {
@@ -270,7 +297,7 @@ const App = () => {
       <header className="border-b border-border sticky top-0 bg-background/90 backdrop-blur-md z-40">
         <div className="flex items-center justify-between p-4">
           <div className="flex items-center gap-3">
-            <div className="bg-primary p-2 rounded-lg shadow-lg shadow-primary/20">
+            <div className="bg-primary p-2 rounded-lg">
               <Icon name="radio" className="text-white w-5 h-5" />
             </div>
             <div>
@@ -300,10 +327,9 @@ const App = () => {
                   requestNotificationPermission();
                 } else {
                   setNotificationsEnabled(!notificationsEnabled);
-                  addLog(`Alerts toggled: ${!notificationsEnabled ? 'OFF' : 'ON'}`);
+                  addLog(`Alerts: ${!notificationsEnabled ? 'OFF' : 'ON'}`);
                 }
               }}
-              title={isNotificationSupported ? `Permission: ${notificationPermission}` : "Notifications not supported"}
             >
               <Icon name={notificationsEnabled ? "bell" : "bell-off"} className="w-4 h-4 md:w-5 md:h-5" />
               {notificationPermission === 'default' && (
@@ -316,7 +342,7 @@ const App = () => {
             <Button variant="outline" size="sm" onClick={() => setIsConnectModalOpen(true)} className="h-8 md:h-10 text-xs">
               <Icon name="zap" className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" /> Connect
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setIsEditMode(!isEditMode)} className="h-8 md:h-10 text-xs">
+            <Button variant="ghost" size="sm" onClick={() => setIsEditMode(!isEditMode)} className="h-8 md:h-10 text-xs text-muted-foreground">
               <Icon name={isEditMode ? "check" : "edit"} className={cn("w-3 h-3 md:w-4 md:h-4", isEditMode && "text-emerald-500")} />
             </Button>
           </div>
@@ -353,7 +379,7 @@ const App = () => {
                <div className="flex items-start gap-3">
                  <Icon name="smartphone" className="text-blue-400 w-5 h-5 shrink-0 mt-1" />
                  <div>
-                   <h3 className="text-sm font-bold text-blue-100">Action Required: iOS Setup</h3>
+                   <h3 className="text-sm font-bold text-blue-100">Setup Required for iOS</h3>
                    <p className="text-xs text-blue-200/70 mt-1 leading-relaxed">
                      To receive alerts and use the full control deck, tap 'Share' and then <span className="text-blue-300 font-bold">"Add to Home Screen"</span>.
                    </p>
@@ -366,15 +392,15 @@ const App = () => {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-              <Icon name="activity" className="w-3 h-3" /> System Logs
+              <Icon name="activity" className="w-3 h-3" /> System Console
             </h2>
             <Button 
               size="sm" 
-              variant="ghost" 
+              variant="outline" 
               onClick={testNotification}
-              className="h-6 text-[8px] uppercase tracking-tighter px-2 bg-primary/5 hover:bg-primary/20 text-primary border border-primary/20"
+              className="h-6 text-[8px] uppercase tracking-tighter px-2 border-primary/20 text-primary hover:bg-primary/10"
             >
-              Test Notification
+              Force Test Alert
             </Button>
           </div>
           
@@ -383,7 +409,7 @@ const App = () => {
               {logs.length === 0 && (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground opacity-20 p-8 text-center">
                   <Icon name="radio" className="w-8 h-8 mb-2" />
-                  <p>Awaiting events...</p>
+                  <p>Awaiting P2P signals...</p>
                 </div>
               )}
               <div className="divide-y divide-white/[0.05]">
@@ -404,10 +430,10 @@ const App = () => {
           
           <div className="flex flex-wrap gap-2 px-1">
              <div className={cn("text-[8px] px-1.5 py-0.5 rounded border uppercase font-bold", isNotificationSupported ? "border-emerald-500/30 text-emerald-400" : "border-red-500/30 text-red-400")}>
-               Push Service: {isNotificationSupported ? 'READY' : 'NC'}
+               Push API: {isNotificationSupported ? 'READY' : 'NC'}
              </div>
              <div className="text-[8px] px-1.5 py-0.5 rounded border border-muted-foreground/30 text-muted-foreground uppercase font-bold">
-               Permission: {notificationPermission.toUpperCase()}
+               State: {notificationPermission.toUpperCase()}
              </div>
           </div>
         </div>
@@ -417,7 +443,7 @@ const App = () => {
         <div className="space-y-6 py-4">
           <div className="text-center space-y-2">
             <h2 className="text-xl font-bold">Connect Peers</h2>
-            <p className="text-sm text-muted-foreground">Broadcast messages to connected devices.</p>
+            <p className="text-sm text-muted-foreground">Sync multiple devices for remote control.</p>
           </div>
 
           <div className="flex flex-col items-center gap-4">
@@ -441,7 +467,7 @@ const App = () => {
                     <Icon name="copy" className="w-3 h-3 opacity-0 group-hover:opacity-50" />
                   </div>
                   <Button onClick={() => setIsScannerActive(true)} className="w-full shadow-lg shadow-primary/20">
-                    <Icon name="camera" className="w-4 h-4 mr-2" /> Scan Peer QR
+                    <Icon name="camera" className="w-4 h-4 mr-2" /> Open Scanner
                   </Button>
                 </div>
               </div>
@@ -449,11 +475,11 @@ const App = () => {
           </div>
           
           <div className="border-t border-border pt-4">
-            <Label className="text-[10px] uppercase font-bold text-muted-foreground block mb-2">Manual Entry</Label>
+            <Label className="text-[10px] uppercase font-bold text-muted-foreground block mb-2">Connect via ID</Label>
             <div className="flex gap-2">
               <Input 
                 id="manual-peer-id"
-                placeholder="Paste Peer ID..." 
+                placeholder="Target Peer ID..." 
                 className="font-mono text-xs h-9"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -481,12 +507,12 @@ const App = () => {
             if (editingButton) saveButtons(buttons.map(b => b.id === config.id ? config : b));
             else saveButtons([...buttons, config]);
             setIsModalOpen(false); setEditingButton(null);
-            addLog(`Button saved: ${config.label}`);
+            addLog(`Button Updated: ${config.label}`);
         }}
         onDelete={(id) => {
             saveButtons(buttons.filter(b => b.id !== id));
             setIsModalOpen(false); setEditingButton(null);
-            addLog(`Button deleted.`);
+            addLog(`Button Deleted`);
         }}
         initialConfig={editingButton}
       />
