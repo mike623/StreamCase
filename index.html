@@ -70,6 +70,7 @@
     "react": "https://esm.sh/react@^19.2.3",
     "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react-dom": "https://esm.sh/react-dom@^19.2.3",
     "@google/genai": "https://esm.sh/@google/genai@^1.35.0",
     "clsx": "https://esm.sh/clsx@^2.1.1",
     "tailwind-merge": "https://esm.sh/tailwind-merge@^3.4.0",
@@ -80,6 +81,10 @@
 </head>
   <body class="bg-background text-foreground antialiased min-h-screen selection:bg-primary selection:text-white">
     <div id="root"></div>
+    
+    <!-- Load App -->
+    <script type="module" src="./index.tsx"></script>
+
     <script>
       // Service Worker Registration for PWA
       if ('serviceWorker' in navigator) {

@@ -2,14 +2,14 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { DeckButtonConfig } from "../types";
 
 export const generateButtonConfig = async (description: string): Promise<Partial<DeckButtonConfig>> => {
-  if (!process.env.API_KEY) {
-    throw new Error("API Key missing");
+  const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : undefined;
+  
+  if (!apiKey) {
+    throw new Error("API Key missing in environment variables.");
   }
 
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = new GoogleGenAI({ apiKey });
   
-  // We ask Gemini to map a user description to our button config structure
-  // We provide the list of available icons so it chooses correctly.
   const availableIcons = [
     'monitor', 'mic', 'mic-off', 'camera', 'message-square', 
     'clock', 'power', 'zap', 'wifi', 'radio', 'command', 
@@ -31,7 +31,8 @@ export const generateButtonConfig = async (description: string): Promise<Partial
           iconName: { type: Type.STRING },
           color: { type: Type.STRING },
           payload: { type: Type.STRING }
-        }
+        },
+        required: ["label", "iconName", "color", "payload"]
       }
     }
   });
