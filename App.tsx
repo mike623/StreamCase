@@ -24,7 +24,7 @@ const App = () => {
   // Notifications State
   const [isNotificationSupported, setIsNotificationSupported] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState<string>('default');
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [isIOS, setIsIOS] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
 
@@ -38,6 +38,7 @@ const App = () => {
 
   const addLog = useCallback((msg: string, type: 'info' | 'error' | 'broadcast' = 'info') => {
     setLogs(prev => [{ msg, type, time: Date.now() }, ...prev].slice(0, 100));
+    console.log(`[StreamCast] ${type.toUpperCase()}: ${msg}`);
   }, []);
 
   useEffect(() => {
@@ -53,103 +54,116 @@ const App = () => {
     setIsStandalone(standalone);
     
     // Notification Support Check
-    // Critical for Safari: Notification is undefined unless added to Home Screen (standalone)
     const supported = ('Notification' in window) && ('serviceWorker' in navigator);
     setIsNotificationSupported(supported);
     
     if (supported) {
-      setNotificationPermission(Notification.permission);
-      // Automatically enable if permission was previously granted
-      setNotificationsEnabled(Notification.permission === 'granted');
-      addLog(`System: Notifications ready. Current State: ${Notification.permission}`);
+      const currentPermission = Notification.permission;
+      setNotificationPermission(currentPermission);
+      if (currentPermission === 'granted') {
+        setNotificationsEnabled(true);
+      }
+      addLog(`System: Notification engine initialized. Status: ${currentPermission}`);
     } else {
-      addLog('System: Notification API not detected. Note: Mobile Safari requires PWA installation for this feature.', 'info');
+      addLog('System: Notification API not detected. Mobile Safari requires PWA installation.', 'info');
     }
   }, [addLog]);
 
   const requestNotificationPermission = async () => {
-    // Case 1: Browser doesn't support Notifications (likely iOS Safari not in standalone)
     if (!isNotificationSupported) {
       if (isIOS && !isStandalone) {
-        alert("Action Required: Notifications on iOS are only available when the app is installed. Tap 'Share' and then 'Add to Home Screen' to enable this feature.");
+        alert("To enable notifications on iOS, please add this app to your Home Screen first.");
       } else {
-        alert("Notifications are not supported on this browser version or environment.");
+        alert("Notifications are not supported on this device/browser.");
       }
       return;
     }
 
-    // Case 2: Permission already denied
     if (Notification.permission === 'denied') {
-      alert("Notification access was previously denied. Please open your browser settings and reset permissions for this site to allow notifications.");
+      alert("Notification access is blocked. Please enable it in your browser site settings.");
       return;
     }
 
-    addLog('Requesting system permission for push notifications...');
+    addLog('Prompting for notification permission...');
     try {
-      // Prompt user
       const permission = await Notification.requestPermission();
       setNotificationPermission(permission);
       
       if (permission === 'granted') {
         setNotificationsEnabled(true);
-        addLog('Notification permission successfully granted.');
+        addLog('Notification permission granted successfully.');
         
-        // Use service worker to send a test notification
         const registration = await navigator.serviceWorker.ready;
-        if (registration) {
-          (registration as any).showNotification("StreamCast Deck", {
-            body: "Connection verified! You will receive alerts for incoming broadcasts.",
+        if (registration && 'showNotification' in registration) {
+          registration.showNotification("StreamCast Deck", {
+            body: "Notifications are active! You will receive alerts for all incoming broadcasts.",
             icon: 'https://cdn-icons-png.flaticon.com/512/3661/3661502.png',
-            tag: 'streamcast-setup'
+            tag: 'streamcast-verify'
           });
         }
       } else {
-        addLog(`Notification permission status: ${permission}.`, 'info');
+        addLog(`Notification permission declined: ${permission}`);
       }
     } catch (err) {
-      addLog(`Unexpected error during permission request: ${err}`, 'error');
-      // Legacy fallback
-      Notification.requestPermission((p) => {
-        setNotificationPermission(p);
-        if (p === 'granted') {
-          setNotificationsEnabled(true);
-          addLog('Permission granted via fallback.');
-        }
-      });
+      addLog(`Permission Request Error: ${err}`, 'error');
     }
   };
 
   const showLocalNotification = useCallback(async (msg: BroadcastMessage) => {
-    // Only proceed if user explicitly enabled them and browser permission is granted
-    if (!notificationsEnabled || Notification.permission !== 'granted') return;
+    addLog(`Attempting notification for: ${msg.buttonId}...`);
+
+    if (Notification.permission !== 'granted') {
+      addLog(`Notification failed: Permission is ${Notification.permission}. Triggering request fallback.`, 'error');
+      requestNotificationPermission();
+      return;
+    }
+
+    if (!notificationsEnabled) {
+      addLog('Notification skipped: User disabled alerts in UI toggle.', 'info');
+      return;
+    }
     
     try {
       const btn = buttons.find(b => b.id === msg.buttonId);
       const label = btn?.label || 'Remote Command';
       const body = typeof msg.payload === 'string' ? msg.payload : JSON.stringify(msg.payload);
 
-      // Best practice for Mobile/PWA: Trigger through the Service Worker
+      addLog('Waiting for ServiceWorker registration...');
       const registration = await navigator.serviceWorker.ready;
+      
       if (registration && 'showNotification' in registration) {
-        await (registration as any).showNotification(`StreamCast: ${label}`, {
+        addLog('SW Ready. Triggering showNotification...');
+        await (registration as ServiceWorkerRegistration).showNotification(`StreamCast: ${label}`, {
           body,
           icon: 'https://cdn-icons-png.flaticon.com/512/3661/3661502.png',
           badge: 'https://cdn-icons-png.flaticon.com/512/3661/3661502.png',
           vibrate: [200, 100, 200],
-          tag: 'streamcast-msg',
-          renotify: true
-        });
-        addLog(`Notification delivered for: ${label}`);
+          tag: `msg-${Date.now()}`,
+          renotify: true,
+          requireInteraction: false
+        } as any);
+        addLog(`Notification delivered for broadcast: ${label}`);
       } else {
-        // Fallback to standard web notification
+        addLog('SW Notification not available. Falling back to window.Notification...', 'info');
         new Notification(`StreamCast: ${label}`, { body });
+        addLog(`Legacy notification triggered for: ${label}`);
       }
     } catch (err) {
-      addLog(`Notification delivery failed: ${err}`, 'error');
+      addLog(`Notification execution failed: ${err}`, 'error');
     }
   }, [notificationsEnabled, buttons, addLog]);
 
-  // PeerJS setup...
+  const testNotification = () => {
+    addLog('User triggered manual test notification.');
+    showLocalNotification({
+      type: 'BUTTON_PRESS',
+      buttonId: 'test-debug',
+      payload: 'This is a test notification from the debug panel.',
+      timestamp: Date.now()
+    });
+  };
+
+  // PeerJS setup
   useEffect(() => {
     const peer = new Peer();
     peerRef.current = peer;
@@ -157,12 +171,12 @@ const App = () => {
     peer.on('open', (id) => {
       setPeerId(id);
       setIsPeerReady(true);
-      addLog(`P2P Engine Online. Your ID: ${id}`);
+      addLog(`Network: P2P Ready. My ID: ${id}`);
       QRCode.toDataURL(id, { width: 300, margin: 2 }).then(setQrDataUrl);
     });
 
     peer.on('connection', (conn) => {
-      addLog(`Incoming connection from: ${conn.peer}`);
+      addLog(`Peer connected: ${conn.peer}`);
       setupConnection(conn);
     });
 
@@ -183,7 +197,7 @@ const App = () => {
 
     conn.on('data', (data) => {
       const msg = data as BroadcastMessage;
-      addLog(`Remote command: ${msg.buttonId}`, 'broadcast');
+      addLog(`Received broadcast: ${msg.buttonId}`, 'broadcast');
       showLocalNotification(msg);
     });
 
@@ -196,13 +210,13 @@ const App = () => {
   const connectToPeer = (targetId: string) => {
     const cleanId = targetId.trim();
     if (!peerRef.current || !cleanId || cleanId === peerId) return;
-    addLog(`Initiating connection to ${cleanId}...`);
+    addLog(`Connecting to peer: ${cleanId}...`);
     const conn = peerRef.current.connect(cleanId);
     setupConnection(conn);
     setIsConnectModalOpen(false);
   };
 
-  // QR Logic...
+  // QR Logic
   useEffect(() => {
     if (isScannerActive && !scannerRef.current) {
       const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 250 }, false);
@@ -237,7 +251,7 @@ const App = () => {
       payload: btn.payload,
       timestamp: Date.now()
     };
-    addLog(`Executing local broadcast: ${btn.label}`, 'broadcast');
+    addLog(`Sending Broadcast: ${btn.label}`, 'broadcast');
     connections.forEach(conn => conn.open && conn.send(message));
   };
 
@@ -282,21 +296,17 @@ const App = () => {
                 !isNotificationSupported && "opacity-40 grayscale"
               )}
               onClick={() => {
-                // Clicking the bell icon should ALWAYS try to ensure notifications are ready
-                if (notificationPermission !== 'granted' || !isNotificationSupported) {
+                if (notificationPermission !== 'granted') {
                   requestNotificationPermission();
                 } else {
-                  // Permission is already granted, toggle local listening state
-                  const newState = !notificationsEnabled;
-                  setNotificationsEnabled(newState);
-                  addLog(`Notifications listening toggled: ${newState ? 'ON' : 'OFF'}`);
+                  setNotificationsEnabled(!notificationsEnabled);
+                  addLog(`Alerts toggled: ${!notificationsEnabled ? 'OFF' : 'ON'}`);
                 }
               }}
               title={isNotificationSupported ? `Permission: ${notificationPermission}` : "Notifications not supported"}
             >
               <Icon name={notificationsEnabled ? "bell" : "bell-off"} className="w-4 h-4 md:w-5 md:h-5" />
-              {/* Pulse indicator if permission is needed */}
-              {(notificationPermission === 'default' || (isIOS && !isStandalone)) && (
+              {notificationPermission === 'default' && (
                 <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary"></span>
@@ -343,9 +353,9 @@ const App = () => {
                <div className="flex items-start gap-3">
                  <Icon name="smartphone" className="text-blue-400 w-5 h-5 shrink-0 mt-1" />
                  <div>
-                   <h3 className="text-sm font-bold text-blue-100">Setup Required for iOS</h3>
+                   <h3 className="text-sm font-bold text-blue-100">Action Required: iOS Setup</h3>
                    <p className="text-xs text-blue-200/70 mt-1 leading-relaxed">
-                     To receive notifications and use the full control surface, tap the Share icon and select <span className="text-blue-300 font-bold">"Add to Home Screen"</span>.
+                     To receive alerts and use the full control deck, tap 'Share' and then <span className="text-blue-300 font-bold">"Add to Home Screen"</span>.
                    </p>
                  </div>
                </div>
@@ -354,15 +364,26 @@ const App = () => {
         </div>
 
         <div className="space-y-4">
-          <h2 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-            <Icon name="activity" className="w-3 h-3" /> Event Engine
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+              <Icon name="activity" className="w-3 h-3" /> System Logs
+            </h2>
+            <Button 
+              size="sm" 
+              variant="ghost" 
+              onClick={testNotification}
+              className="h-6 text-[8px] uppercase tracking-tighter px-2 bg-primary/5 hover:bg-primary/20 text-primary border border-primary/20"
+            >
+              Test Notification
+            </Button>
+          </div>
+          
           <Card className="bg-black/40 border-border overflow-hidden">
             <CardContent className="p-0 h-[300px] lg:h-[450px] overflow-y-auto font-mono text-[10px]">
               {logs.length === 0 && (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground opacity-20 p-8 text-center">
                   <Icon name="radio" className="w-8 h-8 mb-2" />
-                  <p>Awaiting P2P Traffic...</p>
+                  <p>Awaiting events...</p>
                 </div>
               )}
               <div className="divide-y divide-white/[0.05]">
@@ -383,10 +404,10 @@ const App = () => {
           
           <div className="flex flex-wrap gap-2 px-1">
              <div className={cn("text-[8px] px-1.5 py-0.5 rounded border uppercase font-bold", isNotificationSupported ? "border-emerald-500/30 text-emerald-400" : "border-red-500/30 text-red-400")}>
-               Push API: {isNotificationSupported ? 'ACTIVE' : 'INACTIVE'}
+               Push Service: {isNotificationSupported ? 'READY' : 'NC'}
              </div>
              <div className="text-[8px] px-1.5 py-0.5 rounded border border-muted-foreground/30 text-muted-foreground uppercase font-bold">
-               Status: {notificationPermission.toUpperCase()}
+               Permission: {notificationPermission.toUpperCase()}
              </div>
           </div>
         </div>
@@ -396,7 +417,7 @@ const App = () => {
         <div className="space-y-6 py-4">
           <div className="text-center space-y-2">
             <h2 className="text-xl font-bold">Connect Peers</h2>
-            <p className="text-sm text-muted-foreground">Pair devices to enable remote control.</p>
+            <p className="text-sm text-muted-foreground">Broadcast messages to connected devices.</p>
           </div>
 
           <div className="flex flex-col items-center gap-4">
@@ -428,11 +449,11 @@ const App = () => {
           </div>
           
           <div className="border-t border-border pt-4">
-            <Label className="text-[10px] uppercase font-bold text-muted-foreground block mb-2">Connect Manually</Label>
+            <Label className="text-[10px] uppercase font-bold text-muted-foreground block mb-2">Manual Entry</Label>
             <div className="flex gap-2">
               <Input 
                 id="manual-peer-id"
-                placeholder="Paste Peer ID here..." 
+                placeholder="Paste Peer ID..." 
                 className="font-mono text-xs h-9"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -460,11 +481,12 @@ const App = () => {
             if (editingButton) saveButtons(buttons.map(b => b.id === config.id ? config : b));
             else saveButtons([...buttons, config]);
             setIsModalOpen(false); setEditingButton(null);
-            addLog(`Deck Updated: ${config.label}`);
+            addLog(`Button saved: ${config.label}`);
         }}
         onDelete={(id) => {
             saveButtons(buttons.filter(b => b.id !== id));
             setIsModalOpen(false); setEditingButton(null);
+            addLog(`Button deleted.`);
         }}
         initialConfig={editingButton}
       />
